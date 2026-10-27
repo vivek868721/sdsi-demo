@@ -1,0 +1,2961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PerfRCA Agent — Autonomous Performance Root Cause Analysis</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      /* DEFAULT LIGHT THEME */
+      --bg-dark: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-card-hover: #f1f5f9;
+      --border-color: #e2e8f0;
+      --border-glow: rgba(2, 132, 199, 0.2);
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --text-subtle: #64748b;
+      --accent-blue: #0284c7;
+      --accent-purple: #7c3aed;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-amber: #f59e0b;
+      --card-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+      --gauge-track: #e2e8f0;
+      --input-bg: #f8fafc;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    body.dark-theme {
+      /* DARK THEME */
+      --bg-dark: #0a0d14;
+      --bg-card: #121824;
+      --bg-card-hover: #182030;
+      --border-color: #222d42;
+      --border-glow: rgba(56, 189, 248, 0.25);
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-subtle: #64748b;
+      --accent-blue: #38bdf8;
+      --accent-purple: #a855f7;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-amber: #f59e0b;
+      --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      --gauge-track: #1e293b;
+      --input-bg: #090d16;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-family);
+      line-height: 1.5;
+      min-height: 100vh;
+      overflow-x: hidden;
+      transition: background-color 0.25s ease, color 0.25s ease;
+    }
+
+    /* Ambient Header Glow */
+    .header-glow {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 220px;
+      background: radial-gradient(ellipse at top, rgba(2, 132, 199, 0.12) 0%, rgba(124, 58, 237, 0.06) 50%, transparent 80%);
+      pointer-events: none;
+      z-index: 0;
+      transition: background 0.3s ease;
+    }
+
+    body.dark-theme .header-glow {
+      background: radial-gradient(ellipse at top, rgba(56, 189, 248, 0.15) 0%, rgba(168, 85, 247, 0.08) 50%, transparent 80%);
+    }
+
+    .container {
+      width: 100%;
+      max-width: 100%;
+      margin: 0;
+      padding: 1.25rem 1.25rem 3rem 1.25rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Top Navigation */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #0284c7, #7c3aed);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      box-shadow: 0 4px 15px rgba(2, 132, 199, 0.4);
+    }
+
+    .brand-text h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .brand-text p {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .system-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--accent-green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .system-pill.leak {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--accent-red);
+      border-color: rgba(239, 68, 68, 0.4);
+      animation: pulseAlert 1.5s infinite;
+    }
+
+    .system-pill.investigating {
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--accent-purple);
+      border-color: rgba(168, 85, 247, 0.4);
+      animation: pulsePurple 1.5s infinite;
+    }
+
+    @keyframes pulseAlert {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+    }
+
+    @keyframes pulsePurple {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(168, 85, 247, 0); }
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .link-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.8rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      transition: all 0.2s;
+    }
+
+    .link-badge:hover {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    /* Interactive Controls Panel */
+    .controls-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.25rem 1.75rem;
+      margin-bottom: 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .controls-info h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .controls-info p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .btn-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 0.65rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .btn-normal {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.35);
+    }
+
+    .btn-normal:hover {
+      background: rgba(16, 185, 129, 0.25);
+      border-color: #34d399;
+      transform: translateY(-1px);
+    }
+
+    .btn-leak {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+
+    .btn-leak:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: #f87171;
+      transform: translateY(-1px);
+    }
+
+    .btn-agent {
+      background: linear-gradient(135deg, #0284c7, #7c3aed);
+      color: #ffffff;
+      box-shadow: 0 4px 15px rgba(124, 58, 237, 0.35);
+    }
+
+    .btn-agent:hover {
+      box-shadow: 0 6px 22px rgba(124, 58, 237, 0.55);
+      transform: translateY(-1px);
+    }
+
+    .btn-agent:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    .btn-fix {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-blue);
+      border-color: rgba(56, 189, 248, 0.35);
+    }
+
+    .btn-fix:hover {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: var(--accent-blue);
+    }
+
+    .btn-download {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.18), rgba(56, 189, 248, 0.12));
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.45);
+      box-shadow: 0 2px 8px rgba(14, 165, 233, 0.15);
+    }
+
+    .btn-download:hover {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.3), rgba(56, 189, 248, 0.22));
+      border-color: #38bdf8;
+      box-shadow: 0 4px 16px rgba(56, 189, 248, 0.35);
+      transform: translateY(-1px);
+    }
+
+    /* Grafana Target Input Section */
+    .grafana-target-card {
+      background: linear-gradient(135deg, rgba(18, 24, 36, 0.95), rgba(24, 32, 48, 0.95));
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 14px;
+      padding: 1.35rem 1.75rem;
+      margin-bottom: 1.75rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 25px rgba(56, 189, 248, 0.1);
+      position: relative;
+    }
+
+    .grafana-target-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.85rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .grafana-title-group {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .grafana-logo-badge {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.85rem;
+      box-shadow: 0 2px 10px rgba(249, 115, 22, 0.4);
+    }
+
+    .grafana-target-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+
+    .grafana-input-bar {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .grafana-input-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      background: #090d16;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 0 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .grafana-input-wrapper:focus-within {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.25);
+    }
+
+    .grafana-input-prefix {
+      color: var(--text-subtle);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      margin-right: 0.5rem;
+      user-select: none;
+    }
+
+    .grafana-url-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      padding: 0.75rem 0;
+    }
+
+    .btn-inspect {
+      background: linear-gradient(135deg, #0284c7, #0ea5e9);
+      color: white;
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      padding: 0.75rem 1.4rem;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      white-space: nowrap;
+      transition: all 0.2s;
+      box-shadow: 0 4px 15px rgba(2, 132, 199, 0.35);
+    }
+
+    .btn-inspect:hover {
+      background: linear-gradient(135deg, #0369a1, #0284c7);
+      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.55);
+      transform: translateY(-1px);
+    }
+
+    .btn-url-tool {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 0.72rem 1.05rem;
+      border-radius: 8px;
+      font-size: 0.84rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      white-space: nowrap;
+      transition: all 0.2s;
+      box-shadow: var(--card-shadow);
+    }
+
+    .btn-url-tool:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+      transform: translateY(-1px);
+    }
+
+    .theme-toggle-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 0.45rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      transition: all 0.2s;
+      box-shadow: var(--card-shadow);
+    }
+
+    .theme-toggle-btn:hover {
+      border-color: var(--accent-blue);
+      transform: translateY(-1px);
+    }
+
+    /* Subsystems Section: App Server & DB Server CPU & Memory */
+    .subsystems-section {
+      margin-top: 1.75rem;
+      margin-bottom: 2rem;
+    }
+
+    .subsystems-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .subsystems-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .subsystems-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--accent-green);
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+    }
+
+    .subsystem-charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+    }
+
+    @media (min-width: 900px) {
+      .subsystem-charts-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    /* Parallel Log & AI RCA Grid */
+    .log-and-rca-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    @media (max-width: 960px) {
+      .log-and-rca-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .ai-rca-action-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: var(--card-shadow);
+    }
+
+    body:not(.dark-theme) .ai-rca-action-card {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+    }
+
+    .ai-spike-monitor {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.55rem 0.85rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--accent-green);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      transition: all 0.3s;
+    }
+
+    .ai-spike-monitor.spike {
+      background: rgba(239, 68, 68, 0.12);
+      color: var(--accent-red);
+      border-color: rgba(239, 68, 68, 0.35);
+      animation: pulseAlert 1.5s infinite;
+    }
+
+    /* Light Theme Adaptive Overrides */
+    body:not(.dark-theme) .grafana-target-card {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+    }
+    body:not(.dark-theme) .grafana-target-title {
+      color: #0f172a;
+    }
+    body:not(.dark-theme) .grafana-input-wrapper {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+    }
+    body:not(.dark-theme) .grafana-url-input {
+      color: #0f172a;
+    }
+    body:not(.dark-theme) .preset-chip {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #475569;
+    }
+    body:not(.dark-theme) .preset-chip:hover,
+    body:not(.dark-theme) .preset-chip.active {
+      background: rgba(2, 132, 199, 0.12);
+      color: #0284c7;
+      border-color: #0284c7;
+    }
+    body:not(.dark-theme) .grafana-view-selector-bar {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+    }
+    body:not(.dark-theme) .grafana-dropdown {
+      background: #ffffff;
+      color: #0284c7;
+      border-color: #cbd5e1;
+    }
+    body:not(.dark-theme) .grafana-dropdown option {
+      background: #ffffff;
+      color: #0f172a;
+    }
+    body:not(.dark-theme) .step-node {
+      background: #ffffff;
+      border-color: #e2e8f0;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    }
+    body:not(.dark-theme) .step-badge {
+      background: #e2e8f0;
+      color: #475569;
+    }
+    body:not(.dark-theme) .diff-viewer {
+      background: #ffffff;
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .diff-header {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .tabs-card {
+      background: #ffffff;
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .tabs-nav {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .tab-btn {
+      color: #64748b;
+    }
+    body:not(.dark-theme) .tab-btn.active {
+      background: #ffffff;
+      color: #0284c7;
+    }
+    body:not(.dark-theme) .tab-body {
+      background: #ffffff;
+      color: #0f172a;
+    }
+    body:not(.dark-theme) .jira-box {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .full-rca-report-section {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
+    }
+    body:not(.dark-theme) .report-paper-header {
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .report-title-group h2 {
+      color: #0f172a;
+    }
+    body:not(.dark-theme) .report-section-title {
+      border-color: #e2e8f0;
+      color: #0284c7;
+    }
+    body:not(.dark-theme) .report-callout-box {
+      background: #f8fafc;
+      border-left-color: #10b981;
+      color: #0f172a;
+    }
+    body:not(.dark-theme) .report-table th {
+      background: #f1f5f9;
+      color: #475569;
+      border-color: #e2e8f0;
+    }
+    body:not(.dark-theme) .report-table td {
+      border-color: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .grafana-preset-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .preset-chip {
+      background: #111827;
+      border: 1px solid #1f293d;
+      color: var(--text-muted);
+      border-radius: 9999px;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .preset-chip:hover, .preset-chip.active {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-blue);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+
+    /* Subsystem Dropdown Selector Bar */
+    .grafana-view-selector-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 0.85rem;
+      margin-bottom: 0.85rem;
+      background: rgba(15, 21, 35, 0.8);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 8px;
+      padding: 0.65rem 1rem;
+      flex-wrap: wrap;
+    }
+
+    .grafana-dropdown {
+      flex: 1;
+      min-width: 280px;
+      background: #090d16;
+      color: var(--accent-blue);
+      border: 1px solid #2a374f;
+      border-radius: 6px;
+      padding: 0.5rem 0.85rem;
+      font-size: 0.84rem;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .grafana-dropdown:focus {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
+    }
+
+    .grafana-dropdown option {
+      background: #121824;
+      color: var(--text-main);
+      padding: 0.5rem;
+    }
+
+    /* Expandable Dashboard Container */
+    .dashboard-expand-wrapper {
+      overflow: hidden;
+      transition: max-height 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.5s ease, transform 0.5s ease;
+      max-height: 8000px;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .dashboard-expand-wrapper.collapsed {
+      max-height: 0;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-15px);
+    }
+
+    /* Full Incident RCA Report Display Section */
+    .full-rca-report-section {
+      background: #090d16;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 12px;
+      padding: 1.75rem;
+      margin-top: 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      transition: all 0.4s ease;
+    }
+
+    .full-rca-report-section.highlight {
+      border-color: #38bdf8;
+      box-shadow: 0 0 35px rgba(56, 189, 248, 0.35);
+    }
+
+    .report-paper-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #1e293b;
+      padding-bottom: 1.25rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .report-title-group h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.35rem;
+      flex-wrap: wrap;
+    }
+
+    .report-title-group p {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .report-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .report-section-block {
+      margin-bottom: 1.75rem;
+    }
+
+    .report-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.35rem;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .report-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin-top: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .report-table th {
+      background: #111827;
+      color: #94a3b8;
+      text-align: left;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid #1f293d;
+      font-weight: 600;
+    }
+
+    .report-table td {
+      padding: 0.55rem 0.75rem;
+      border: 1px solid #1f293d;
+      color: var(--text-main);
+    }
+
+    .report-callout-box {
+      background: #0f172a;
+      border-left: 4px solid var(--accent-green);
+      border-radius: 4px;
+      padding: 0.85rem 1rem;
+      margin: 0.75rem 0;
+      font-size: 0.82rem;
+      line-height: 1.5;
+    }
+
+    .grafana-promql-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0.85rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .promql-card {
+      background: #090d16;
+      border: 1px solid #1a2333;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .promql-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .promql-query {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.08);
+      padding: 0.25rem 0.45rem;
+      border-radius: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .promql-val {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 280px 1fr 1fr;
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    @media (max-width: 1100px) {
+      .metrics-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.25rem;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.85rem;
+    }
+
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .card-stat {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--text-main);
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+    }
+
+    .card-stat-unit {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    /* Gauge Card Specifics */
+    .gauge-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0.75rem 0;
+      position: relative;
+    }
+
+    .gauge-svg {
+      width: 170px;
+      height: 170px;
+      transform: rotate(-90deg);
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: #1e293b;
+      stroke-width: 14;
+    }
+
+    .gauge-val {
+      fill: none;
+      stroke: var(--accent-green);
+      stroke-width: 14;
+      stroke-linecap: round;
+      stroke-dasharray: 440;
+      stroke-dashoffset: 350;
+      transition: stroke-dashoffset 0.6s ease, stroke 0.6s ease;
+    }
+
+    .gauge-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+
+    .gauge-value {
+      font-size: 1.9rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .gauge-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.2rem;
+    }
+
+    .pool-substats {
+      width: 100%;
+      display: flex;
+      justify-content: space-around;
+      border-top: 1px solid var(--border-color);
+      padding-top: 0.75rem;
+      margin-top: 0.5rem;
+      font-size: 0.78rem;
+    }
+
+    .pool-substat-item {
+      text-align: center;
+    }
+
+    .pool-substat-num {
+      font-weight: 700;
+      color: var(--text-main);
+      display: block;
+    }
+
+    .chart-box {
+      flex: 1;
+      min-height: 170px;
+      position: relative;
+    }
+
+    /* Live State Machine Trace Section */
+    .state-machine-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .section-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .stepper-pipeline {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      position: relative;
+    }
+
+    @media (max-width: 900px) {
+      .stepper-pipeline {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .step-node {
+      background: #0f1523;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: all 0.3s;
+    }
+
+    .step-node.active {
+      border-color: var(--accent-purple);
+      background: rgba(168, 85, 247, 0.08);
+      box-shadow: 0 0 20px rgba(168, 85, 247, 0.25);
+    }
+
+    .step-node.completed {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .step-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #1e293b;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .step-node.active .step-badge {
+      background: var(--accent-purple);
+      color: white;
+      animation: spinRing 2s linear infinite;
+    }
+
+    .step-node.completed .step-badge {
+      background: var(--accent-green);
+      color: white;
+    }
+
+    @keyframes spinRing {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    .step-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      line-height: 1.25;
+    }
+
+    .step-desc {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    .step-meta {
+      margin-top: 0.6rem;
+      font-size: 0.7rem;
+      color: var(--accent-blue);
+      font-family: var(--font-mono);
+    }
+
+    /* Live Agent Terminal / Chain-of-Thought Trace */
+    .terminal-window {
+      background: #090d16;
+      border: 1px solid #1a2333;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    .terminal-line {
+      display: flex;
+      gap: 0.6rem;
+      line-height: 1.4;
+    }
+
+    .term-time {
+      color: var(--text-subtle);
+      user-select: none;
+    }
+
+    .term-step {
+      color: var(--accent-purple);
+      font-weight: 600;
+    }
+
+    .term-msg {
+      color: #cbd5e1;
+    }
+
+    /* Actionable Fix & Artifacts Layout */
+    .artifacts-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    @media (max-width: 1000px) {
+      .artifacts-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .diff-viewer {
+      background: #090d16;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .diff-header {
+      background: #111827;
+      padding: 0.75rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .diff-file-tag {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--accent-blue);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .diff-content {
+      padding: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      line-height: 1.6;
+      overflow-x: auto;
+      max-height: 420px;
+    }
+
+    .diff-line-del {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      display: block;
+    }
+
+    .diff-line-add {
+      background: rgba(16, 185, 129, 0.15);
+      color: #86efac;
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      display: block;
+    }
+
+    .diff-line-context {
+      color: var(--text-subtle);
+      display: block;
+      padding: 0.1rem 0.4rem;
+    }
+
+    /* Tabs Panel for OPP-3716 and Jira */
+    .tabs-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tabs-nav {
+      display: flex;
+      background: #0d121c;
+      border-bottom: 1px solid var(--border-color);
+      border-radius: 10px 10px 0 0;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 0.75rem;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      color: var(--accent-blue);
+      border-bottom-color: var(--accent-blue);
+      background: var(--bg-card);
+    }
+
+    .tab-body {
+      padding: 1.25rem;
+      flex: 1;
+      font-size: 0.85rem;
+      overflow-y: auto;
+      max-height: 420px;
+    }
+
+    .jira-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+
+    .jira-tag {
+      background: #dc2626;
+      color: white;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .jira-meta-row {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 0.4rem;
+      margin-bottom: 0.4rem;
+      font-size: 0.8rem;
+    }
+
+    .jira-meta-label {
+      color: var(--text-subtle);
+    }
+
+    .jira-meta-val {
+      color: var(--text-main);
+      font-weight: 500;
+    }
+
+    .jira-box {
+      background: #090d16;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+
+    /* Live Log Stream Container */
+    .log-stream-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+
+    .log-stream-box {
+      background: #090d16;
+      border: 1px solid #1a2333;
+      border-radius: 8px;
+      padding: 0.85rem;
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      height: 150px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .log-entry {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-entry.error {
+      color: #f87171;
+    }
+
+    .log-entry.warn {
+      color: #fbbf24;
+    }
+
+    .log-entry.info {
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="header-glow"></div>
+
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div class="brand-text">
+          <h1>
+            PerfRCA Agent
+            <span class="system-pill" id="system-status-pill">
+              <span style="width: 7px; height: 7px; border-radius: 50%; background: currentColor;"></span>
+              <span id="system-status-text">HEALTHY (2/10)</span>
+            </span>
+          </h1>
+          <p>Autonomous SRE Agent for Performance Root Cause Analysis & Zero-Day Leak Remediation</p>
+        </div>
+      </div>
+
+      <div class="header-links">
+        <button class="theme-toggle-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle Light / Dark Theme">
+          <span id="theme-icon">☀️</span> <span id="theme-text">Light Theme</span>
+        </button>
+        <button class="link-badge" onclick="downloadIncidentReport()" style="cursor: pointer; background: rgba(56, 189, 248, 0.15); color: #0284c7; border-color: rgba(56, 189, 248, 0.4);">
+          <span>📥</span> Download Document (.doc)
+        </button>
+        <a href="/metrics" target="_blank" class="link-badge">
+          <span>📊</span> /metrics
+        </a>
+        <a href="/docs" target="_blank" class="link-badge">
+          <span>📑</span> OpenAPI Docs
+        </a>
+      </div>
+    </header>
+
+    <!-- Grafana Target URL Inspection Bar -->
+    <section class="grafana-target-card">
+      <div class="grafana-target-top">
+        <div class="grafana-title-group">
+          <div class="grafana-logo-badge">G</div>
+          <div>
+            <div class="grafana-target-title">Target Grafana Dashboard Telemetry Target</div>
+            <p style="font-size: 0.78rem; color: var(--text-muted);">Enter any Grafana or Prometheus dashboard URL. Submitting will inspect PromQL queries, check alert channels, and expand the live dashboard below.</p>
+          </div>
+        </div>
+        <span class="system-pill" id="grafana-status-pill">
+          <span style="width: 7px; height: 7px; border-radius: 50%; background: currentColor;"></span>
+          <span id="grafana-status-text">CONNECTED (LIVE SYNC)</span>
+        </span>
+      </div>
+
+      <div class="grafana-input-bar">
+        <div class="grafana-input-wrapper">
+          <span class="grafana-input-prefix">GRAFANA_URL</span>
+          <input type="text" id="grafana-url-input" class="grafana-url-input" 
+                 value="http://grafana.internal:3000/d/perf-prod/hikari-postgres-pool" 
+                 placeholder="Enter Grafana dashboard URL..."
+                 onkeydown="if(event.key==='Enter') inspectGrafanaTarget()">
+        </div>
+        <button class="btn-inspect" id="btn-inspect-grafana" onclick="inspectGrafanaTarget()" title="Inspect Grafana URL">
+          <span>🔍</span> Inspect & Connect
+        </button>
+        <button class="btn-url-tool" id="btn-git-url" onclick="handleGitUrlAction()" title="Target Git Repository URL for Commit Attribution">
+          <span>🐙</span> Git URL
+        </button>
+        <input type="file" id="log-file-input" accept=".log,.txt,.json,.csv" style="display: none;" onchange="handleLogFileUpload(event)">
+        <button class="btn-url-tool" id="btn-upload-log" onclick="document.getElementById('log-file-input').click()" title="Upload Log File">
+          <span>📁</span> Upload Log File
+        </button>
+      </div>
+      <div id="upload-status-badge" style="display: none; margin-top: 0.5rem; font-size: 0.78rem; color: var(--accent-green); font-weight: 600; align-items: center; gap: 0.4rem;"></div>
+
+      <!-- Subsystem Telemetry Perspective Dropdown -->
+      <div class="grafana-view-selector-bar">
+        <label for="metric-view-select" style="font-size: 0.8rem; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 0.4rem;">
+          <span>🎯</span> Select Subsystem Telemetry:
+        </label>
+        <select id="metric-view-select" class="grafana-dropdown" onchange="onMetricViewChange()">
+          <option value="grafana" selected>📊 Grafana Overview (Database Pool, Latency & TPS)</option>
+          <option value="app_cpu">⚡ Application Server CPU Stat (vCPU, Threads, Context Switches)</option>
+          <option value="app_memory">🧠 Application Server Memory Stat (JVM Heap, GC Pauses, Metaspace)</option>
+          <option value="db_cpu">🗄️ DB Server CPU Stat (PostgreSQL Backends, Lock Contention, IO-Wait)</option>
+          <option value="db_memory">💾 DB Server Memory Stat (Host RAM, Shared Buffers, Cache Hit %)</option>
+        </select>
+      </div>
+
+      <!-- Quick Preset Selection Chips -->
+      <div class="grafana-preset-row">
+        <span style="font-size: 0.74rem; color: var(--text-subtle); margin-right: 0.25rem;">Quick Presets:</span>
+        <button class="preset-chip active" id="chip-preset-1" onclick="selectPreset('http://grafana.internal:3000/d/perf-prod/hikari-postgres-pool', this)">
+          ⚡ Prod HikariCP & Postgres Pool
+        </button>
+        <button class="preset-chip" id="chip-preset-2" onclick="selectPreset('http://grafana.internal:3000/d/orders-prod/latency-p99-tps', this)">
+          🛒 Order Service Latency & TPS
+        </button>
+        <button class="preset-chip" id="chip-preset-3" onclick="selectPreset('http://localhost:8000/metrics', this)">
+          📊 Local Prometheus Exporter (/metrics)
+        </button>
+      </div>
+    </section>
+
+    <!-- Expandable Inspected Dashboard View -->
+    <div class="dashboard-expand-wrapper" id="dashboard-expand-wrapper">
+      <!-- Interactive Controls Panel -->
+      <section class="controls-panel">
+        <div class="controls-info">
+          <h2>Interactive Chaos & Remediation Controls</h2>
+          <p>Inject load or connection leak regressions, then observe autonomous agent triage.</p>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-normal" id="btn-normal" onclick="triggerNormal()">
+            <span>🟢</span> Run Normal Load
+          </button>
+          <button class="btn btn-leak" id="btn-leak" onclick="triggerLeak()">
+            <span>🔴</span> Inject Connection Leak
+          </button>
+          <button class="btn btn-agent" id="btn-agent" onclick="triggerAgentInvestigation()">
+            <span>🤖</span> Run PerfRCA Agent
+          </button>
+          <button class="btn btn-download" id="btn-download" onclick="downloadIncidentReport()">
+            <span>📥</span> Download Document (.doc)
+          </button>
+        </div>
+      </section>
+
+    <!-- Real-time Metrics Grid (Cards 1, 2, 3, 4) -->
+    <section class="metrics-grid">
+      <!-- 1. Connection Pool Gauge Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title" id="card-1-title">DB Connection Pool</span>
+          <span class="link-badge" style="padding: 0.15rem 0.4rem; font-size: 0.72rem;" id="badge-pool-status">HikariPool-1</span>
+        </div>
+        <div class="gauge-container">
+          <svg class="gauge-svg" viewBox="0 0 160 160">
+            <circle class="gauge-bg" cx="80" cy="80" r="65"></circle>
+            <circle class="gauge-val" id="gauge-circle" cx="80" cy="80" r="65"></circle>
+          </svg>
+          <div class="gauge-text">
+            <div class="gauge-value" id="gauge-number">2 / 10</div>
+            <div class="gauge-label" id="gauge-util-pct">20% Saturation</div>
+          </div>
+        </div>
+        <div class="pool-substats">
+          <div class="pool-substat-item">
+            <span class="pool-substat-num" id="stat-idle-conn">8</span>
+            <span style="color: var(--text-subtle);" id="stat-substat-1-label">Idle Slots</span>
+          </div>
+          <div class="pool-substat-item">
+            <span class="pool-substat-num" id="stat-wait-threads">0</span>
+            <span style="color: var(--text-subtle);" id="stat-substat-2-label">Waiting Threads</span>
+          </div>
+          <div class="pool-substat-item">
+            <span class="pool-substat-num" id="stat-timeouts">0</span>
+            <span style="color: var(--text-subtle);" id="stat-substat-3-label">Timeouts</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. DB Query Latency Card (P50, P90, P99) -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title" id="card-2-title">DB Query Latency</span>
+          <div class="card-stat">
+            <span id="stat-latency-p99">16.5</span>
+            <span class="card-stat-unit" id="stat-card-2-unit">ms (P99)</span>
+          </div>
+        </div>
+        <div class="chart-box">
+          <canvas id="latencyChart"></canvas>
+        </div>
+      </div>
+
+      <!-- 3. DB Query Throughput (TPS) Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title" id="card-3-title">DB Query Throughput (TPS)</span>
+          <div class="card-stat">
+            <span id="stat-throughput-tps">45.2</span>
+            <span class="card-stat-unit" id="stat-card-3-unit">TPS</span>
+          </div>
+        </div>
+        <div class="chart-box">
+          <canvas id="tpsChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Subsystems Section: Application Server & Database Server CPU & Memory Charts -->
+    <section class="subsystems-section">
+      <div class="subsystems-header">
+        <div class="subsystems-title">
+          <span>🖥️</span> Application Server & Database Server Telemetry
+        </div>
+        <span class="subsystems-badge">● LIVE GRAFANA SUBSYSTEM METRICS</span>
+      </div>
+
+      <div class="subsystem-charts-grid">
+        <!-- 1. App Server CPU Chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">App Server CPU Utilization</span>
+            <div class="card-stat">
+              <span id="stat-app-cpu-val">23.5</span>
+              <span class="card-stat-unit">% (8 vCPUs)</span>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="appCpuChart"></canvas>
+          </div>
+        </div>
+
+        <!-- 2. App Server JVM Heap Memory Chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">App Server JVM Heap Memory</span>
+            <div class="card-stat">
+              <span id="stat-app-mem-val">1,450</span>
+              <span class="card-stat-unit">MB / 4,096 MB</span>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="appMemChart"></canvas>
+          </div>
+        </div>
+
+        <!-- 3. DB Server Host CPU Chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">PostgreSQL Host CPU Utilization</span>
+            <div class="card-stat">
+              <span id="stat-db-cpu-val">18.2</span>
+              <span class="card-stat-unit">% (16 Cores)</span>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="dbCpuChart"></canvas>
+          </div>
+        </div>
+
+        <!-- 4. DB Server Host RAM & Buffers Chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">PostgreSQL Host RAM & Buffers</span>
+            <div class="card-stat">
+              <span id="stat-db-mem-val">6.7</span>
+              <span class="card-stat-unit">GB / 16.0 GB</span>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="dbMemChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Agent State-Machine Trace -->
+    <section class="state-machine-section">
+      <div class="section-title-row">
+        <div class="section-title">
+          <span>🧠</span> Live Agent State-Machine Trace
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <button class="btn btn-download" id="btn-download-trace" onclick="downloadIncidentReport()" style="padding: 0.4rem 0.85rem; font-size: 0.78rem;">
+            <span>📥</span> Download Document
+          </button>
+          <span class="link-badge" id="agent-active-badge">Status: STANDBY</span>
+        </div>
+      </div>
+
+      <!-- 2-Step Visual Stepper Pipeline -->
+      <div class="stepper-pipeline">
+        <!-- Step 1 -->
+        <div class="step-node" id="step-node-1">
+          <div class="step-top">
+            <div class="step-badge" id="step-badge-1">1</div>
+            <span style="font-size: 0.7rem; color: var(--text-subtle);">METRICS</span>
+          </div>
+          <div class="step-title">P99 Anomaly Detection</div>
+          <div class="step-desc">Detects latency spike &gt;3000ms & pool 10/10 saturation.</div>
+          <div class="step-meta" id="step-meta-1">Waiting...</div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="step-node" id="step-node-2">
+          <div class="step-top">
+            <div class="step-badge" id="step-badge-2">2</div>
+            <span style="font-size: 0.7rem; color: var(--text-subtle);">LOG CLUSTERING</span>
+          </div>
+          <div class="step-title">45k Log Mining</div>
+          <div class="step-desc">Drain-Tree clusters 45k logs into Hikari timeout template.</div>
+          <div class="step-meta" id="step-meta-2">Waiting...</div>
+        </div>
+      </div>
+
+      <!-- Real-time Agent Chain-of-Thought Terminal -->
+      <div class="terminal-window" id="agent-terminal">
+        <div class="terminal-line">
+          <span class="term-time">[SYSTEM]</span>
+          <span class="term-msg">PerfRCA Agent initialized. Ready to observe anomalies.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Parallel Section: Live Log Stream + AI RCA Analysis Trigger Card -->
+    <div class="log-and-rca-grid">
+      <!-- Left: Live Log Stream Console -->
+      <section class="log-stream-card">
+        <div class="card-header">
+          <span class="card-title">Live Application & HikariCP Log Stream</span>
+          <span style="font-size: 0.75rem; color: var(--text-subtle);">Auto-scrolling telemetry feed</span>
+        </div>
+        <div class="log-stream-box" id="log-stream">
+          <div class="log-entry info">[INFO]  [HikariPool-1] Pool stats (total=10, active=2, idle=8, waiting=0)</div>
+        </div>
+      </section>
+
+      <!-- Right: AI RCA Agent Analysis Card (Parallel) -->
+      <section class="ai-rca-action-card">
+        <div class="card-header">
+          <span class="card-title">🤖 Autonomous AI RCA Engine</span>
+          <span class="subsystems-badge" id="ai-engine-status-badge">READY</span>
+        </div>
+        <div class="ai-rca-action-body">
+          <div class="ai-spike-monitor" id="ai-spike-monitor">
+            <span id="ai-spike-icon">🟢</span>
+            <span id="ai-spike-text">Telemetry within SLA (2/10 conn, 16.5ms). Ready.</span>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0.6rem 0;">
+            When a performance spike occurs, the AI Agent isolates root cause telemetry, clusters 45k logs, matches institutional memory, and attributes culprit commits.
+          </p>
+          <div style="display: flex; gap: 0.65rem; flex-wrap: wrap; margin-top: 0.5rem;">
+            <button class="btn btn-agent" id="btn-run-rca-parallel" onclick="triggerAgentInvestigation()">
+              <span>🤖</span> Generate & Show RCA Report
+            </button>
+            <button class="btn btn-download" id="btn-download-parallel" onclick="downloadIncidentReport()">
+              <span>📥</span> Download Document (.doc)
+            </button>
+          </div>
+
+          <!-- Animated AI Working Progress Indicator -->
+          <div id="ai-working-indicator" style="display: none; margin-top: 0.85rem; padding: 0.75rem; background: rgba(124, 58, 237, 0.08); border: 1px solid rgba(124, 58, 237, 0.3); border-radius: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.82rem; font-weight: 700; color: var(--accent-purple);">
+              <span id="ai-working-step-text">⚡ AI Agent is analyzing spike telemetry...</span>
+              <span id="ai-working-pct-text">25%</span>
+            </div>
+            <div style="margin-top: 0.4rem; height: 6px; background: rgba(124, 58, 237, 0.2); border-radius: 3px; overflow: hidden;">
+              <div id="ai-progress-bar" style="height: 100%; width: 25%; background: linear-gradient(90deg, #0284c7, #7c3aed); transition: width 0.3s ease;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Dedicated Full Incident RCA Report Section (Generated dynamically when AI analyzes spike) -->
+    <section class="full-rca-report-section" id="section-full-report" style="display: none;">
+      <div class="report-paper-header">
+        <div class="report-title-group">
+          <h2>
+            <span>🚨</span> Incident Root Cause Analysis (RCA) Report
+            <span class="jira-tag" style="font-size: 0.8rem; padding: 0.25rem 0.65rem;">PERF-512 (P0 - BLOCKER)</span>
+          </h2>
+          <p>
+            Target Grafana URL: <strong id="report-target-grafana-url" style="color: #f97316; font-family: var(--font-mono);">http://grafana.internal:3000/d/perf-prod/hikari-postgres-pool</strong> |
+            Target Service: <code>order-service</code> | Detection Date: <span id="report-timestamp">Live Telemetry Spike</span>
+          </p>
+        </div>
+        <div class="report-actions">
+          <button class="btn btn-download" onclick="downloadIncidentReport()" style="box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);">
+            <span>📥</span> Download Document (.doc)
+          </button>
+        </div>
+      </div>
+
+      <!-- 1. Executive Summary -->
+      <div class="report-section-block">
+        <div class="report-section-title"><span>📋</span> 1. Executive Summary</div>
+        <p style="font-size: 0.85rem; line-height: 1.6; color: var(--text-main);" id="report-exec-summary">
+          During continuous telemetry monitoring of the Grafana dashboard (<code style="color: #f97316;" id="report-summary-url">http://grafana.internal:3000/d/perf-prod/hikari-postgres-pool</code>), 
+          the database connection pool (<code style="color: #38bdf8;">HikariPool-1</code>) suffered acute starvation. Leased connections surged to <strong><span id="report-sum-active">10/10 (100%)</span> capacity</strong>, 
+          causing incoming checkout queries to wait up to 30,000ms before timing out. P99 query latency degraded to <strong><span id="report-sum-p99">3,450.0 ms</span></strong>, 
+          while query throughput (TPS) collapsed down to <strong><span id="report-sum-tps">1.8 TPS</span></strong>.
+        </p>
+        <div class="report-callout-box">
+          <strong>Autonomous PerfRCA Agent Diagnosis:</strong><br>
+          • <strong>Telemetry Anomaly:</strong> Classified as <code>CRITICAL_CONNECTION_POOL_EXHAUSTION</code>.<br>
+          • <strong>45,000 Log Clustering:</strong> Clustered logs with Drain algorithm. Isolated 39,812 hits (88.5%) of HikariPool acquisition timeout template originated from <code>OrderService.getOrderDetailsFast()</code>.<br>
+          • <strong>Institutional Memory:</strong> Matched historical post-mortem <strong>OPP-3716</strong> with 98.4% confidence.<br>
+          • <strong>Git Blame:</strong> Blamed commit <code>b8f3a9e</code> (Alex Dev) introducing raw unclosed JDBC connections in <code>OrderService.java</code>.
+        </div>
+      </div>
+
+      <!-- 2. Telemetry Impact Matrix -->
+      <div class="report-section-block">
+        <div class="report-section-title"><span>📊</span> 2. Telemetry Impact Matrix</div>
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Metric Dimension</th>
+              <th>Healthy Baseline</th>
+              <th>Incident Peak</th>
+              <th>Impact / Degradation Factor</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Connection Pool Utilization</strong></td>
+              <td>2 / 10 (20%)</td>
+              <td><span id="report-matrix-pool">10 / 10 (100%)</span></td>
+              <td><span style="color: #f87171; font-weight: 700;" id="report-matrix-pool-factor">+400% (Complete Saturation)</span></td>
+            </tr>
+            <tr>
+              <td><strong>P99 Query Latency</strong></td>
+              <td>16.5 ms</td>
+              <td><span id="report-matrix-latency">3,450.0 ms</span></td>
+              <td><span style="color: #f87171; font-weight: 700;" id="report-matrix-latency-factor">+21,462% (Critical SLA Breach)</span></td>
+            </tr>
+            <tr>
+              <td><strong>Query Throughput (TPS)</strong></td>
+              <td>45.2 TPS</td>
+              <td><span id="report-matrix-tps">1.8 TPS</span></td>
+              <td><span style="color: #f87171; font-weight: 700;" id="report-matrix-tps-factor">-96.0% (Throughput Collapse)</span></td>
+            </tr>
+            <tr>
+              <td><strong>Queued Waiting Threads</strong></td>
+              <td>0 threads</td>
+              <td><span id="report-matrix-threads">84 threads</span></td>
+              <td><span style="color: #fbbf24; font-weight: 700;" id="report-matrix-threads-factor">Thread Pool Starvation</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 3. Culprit Git Commit & Root Cause Attribution -->
+      <div class="report-section-block">
+        <div class="report-section-title"><span>🔍</span> 3. Culprit Git Commit & Root Cause Attribution</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 0.75rem;">
+          <div style="background: #0d121f; border: 1px solid #1e293b; border-radius: 6px; padding: 0.75rem; font-size: 0.8rem;">
+            <div><strong style="color: #94a3b8;">Commit Hash:</strong> <code style="color: #f87171;">b8f3a9e</code></div>
+            <div><strong style="color: #94a3b8;">Author:</strong> Alex Dev &lt;alex.dev@acme-commerce.com&gt;</div>
+            <div><strong style="color: #94a3b8;">Message:</strong> feat(order): bypass ORM reflection with direct JDBC fast-path lookup</div>
+            <div><strong style="color: #94a3b8;">File:</strong> <code>OrderService.java (Line 41)</code></div>
+          </div>
+          <div style="background: #0d121f; border: 1px solid #1e293b; border-radius: 6px; padding: 0.75rem; font-size: 0.8rem;">
+            <div><strong style="color: #94a3b8;">Defect Classification:</strong> Connection Resource Leak</div>
+            <div><strong style="color: #94a3b8;">Matched Incident:</strong> OPP-3716 (98.4% Vector Overlap)</div>
+            <div><strong style="color: #94a3b8;">Root Cause Status:</strong> <span style="color: var(--accent-green); font-weight: 700;">✔ ISOLATED & CONFIRMED</span></div>
+            <div><strong style="color: #94a3b8;">Failure Signature:</strong> Unclosed java.sql.Connection handle</div>
+          </div>
+        </div>
+
+        <div style="background: #090d16; border-left: 4px solid var(--accent-red); border-radius: 4px; padding: 0.85rem 1rem; font-size: 0.82rem; line-height: 1.5; color: #cbd5e1;">
+          <strong style="color: #f87171;">Root Cause Diagnosis:</strong><br>
+          In commit <code style="color: #f87171;">b8f3a9e</code>, method <code>OrderService.getOrderDetailsFast()</code> acquires a raw database connection via <code>dataSource.getConnection()</code> without an <code>AutoCloseable</code> scope or <code>finally</code> block.<br>
+          Every call permanently leases 1 slot from <code>HikariPool-1</code> without returning it. At 45 requests/second, the 10-connection pool is exhausted in under 300ms, causing all subsequent queries to block, wait 30,000ms, and timeout.
+        </div>
+      </div>
+
+      <!-- Report Footer Action -->
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; border-top: 1px solid #1e293b; padding-top: 1rem;">
+        <button class="btn btn-download" onclick="downloadIncidentReport()" style="font-size: 0.85rem;">
+          <span>📥</span> Download Full Word Document (.doc)
+        </button>
+      </div>
+    </section>
+    </div> <!-- /dashboard-expand-wrapper -->
+  </div> <!-- /container -->
+
+  <script>
+    // Global State
+    let currentMode = "normal";
+    let isInvestigating = false;
+    let selectedView = "grafana";
+    let lastReceivedMetrics = null;
+    let latencyChartInstance = null;
+    let tpsChartInstance = null;
+    let appCpuChartInstance = null;
+    let appMemChartInstance = null;
+    let dbCpuChartInstance = null;
+    let dbMemChartInstance = null;
+
+    // Initialize Chart.js
+    function initCharts() {
+      const isDark = document.body.classList.contains("dark-theme");
+      const gridColor = isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.06)";
+      const tickColor = isDark ? "#94a3b8" : "#64748b";
+
+      const ctxLatency = document.getElementById("latencyChart").getContext("2d");
+      latencyChartInstance = new Chart(ctxLatency, {
+        type: "line",
+        data: {
+          labels: Array(25).fill(""),
+          datasets: [
+            {
+              label: "P99 Latency (ms)",
+              data: Array(25).fill(16),
+              borderColor: "#ef4444",
+              borderWidth: 2,
+              tension: 0.35,
+              pointRadius: 0
+            },
+            {
+              label: "P50 Latency (ms)",
+              data: Array(25).fill(12),
+              borderColor: "#38bdf8",
+              borderWidth: 1.5,
+              tension: 0.35,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              labels: { color: tickColor, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              grid: { color: gridColor },
+              ticks: { color: tickColor, font: { size: 10 } }
+            }
+          }
+        }
+      });
+
+      const ctxTps = document.getElementById("tpsChart").getContext("2d");
+      tpsChartInstance = new Chart(ctxTps, {
+        type: "line",
+        data: {
+          labels: Array(25).fill(""),
+          datasets: [
+            {
+              label: "Throughput (TPS)",
+              data: Array(25).fill(45),
+              borderColor: "#10b981",
+              backgroundColor: "rgba(16, 185, 129, 0.12)",
+              fill: true,
+              borderWidth: 2,
+              tension: 0.35,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              labels: { color: tickColor, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              min: 0,
+              grid: { color: gridColor },
+              ticks: { color: tickColor, font: { size: 10 } }
+            }
+          }
+        }
+      });
+
+      // 1. App Server CPU Chart (Live dynamic consumption)
+      const ctxAppCpu = document.getElementById("appCpuChart").getContext("2d");
+      appCpuChartInstance = new Chart(ctxAppCpu, {
+        type: "line",
+        data: {
+          labels: Array(25).fill(""),
+          datasets: [
+            {
+              label: "App CPU Utilization (%)",
+              data: [21.4, 25.6, 23.2, 28.1, 26.4, 24.1, 29.8, 31.2, 27.5, 23.8, 26.1, 29.4, 25.2, 22.8, 27.6, 30.1, 26.8, 24.5, 28.3, 25.9, 23.4, 27.2, 29.5, 25.8, 24.2],
+              borderColor: "#0284c7",
+              backgroundColor: "rgba(2, 132, 199, 0.12)",
+              fill: true,
+              borderWidth: 2,
+              tension: 0.35,
+              pointRadius: 0
+            },
+            {
+              label: "Blocked Worker Threads",
+              data: Array(25).fill(0),
+              borderColor: "#ef4444",
+              borderWidth: 1.5,
+              tension: 0.35,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              labels: { color: tickColor, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              min: 0,
+              suggestedMax: 50,
+              grid: { color: gridColor },
+              ticks: { color: tickColor, font: { size: 10 } }
+            }
+          }
+        }
+      });
+
+      // 2. App Server JVM Heap Memory Chart (Authentic JVM Sawtooth Allocation & GC Pauses)
+      const ctxAppMem = document.getElementById("appMemChart").getContext("2d");
+      appMemChartInstance = new Chart(ctxAppMem, {
+        type: "line",
+        data: {
+          labels: Array(25).fill(""),
+          datasets: [
+            {
+              label: "JVM Heap Used (MB)",
+              yAxisID: "y",
+              data: [1340, 1395, 1440, 1510, 1570, 1630, 1690, 1330, 1385, 1450, 1520, 1590, 1660, 1720, 1345, 1410, 1475, 1540, 1610, 1680, 1350, 1420, 1490, 1560, 1450],
+              borderColor: "#7c3aed",
+              backgroundColor: "rgba(124, 58, 237, 0.12)",
+              fill: true,
+              borderWidth: 2,
+              tension: 0.35,
+              pointRadius: 0
+            },
+            {
+              label: "GC Pause Duration (ms)",
+              yAxisID: "y1",
+              data: [9, 11, 10, 12, 11, 13, 26, 10, 11, 12, 10, 13, 12, 28, 10, 12, 11, 13, 12, 27, 10, 12, 11, 13, 12],
+              borderColor: "#f59e0b",
+              borderWidth: 1.5,
+              tension: 0.35,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              labels: { color: tickColor, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              type: "linear",
+              position: "left",
+              suggestedMin: 1100,
+              suggestedMax: 2000,
+              grid: { color: gridColor },
+              ticks: { color: tickColor, font: { size: 10 } }
+            },
+            y1: {
+              type: "linear",
+              position: "right",
+              min: 0,
+              suggestedMax: 45,
+              grid: { display: false },
+              ticks: { color: "#f59e0b", font: { size: 9 } }
+            }
+          }
+        }
+      });
+
+      // 3. PostgreSQL Host CPU Chart (Dynamic PostgreSQL Query Activity)
+      const ctxDbCpu = document.getElementById("dbCpuChart").getContext("2d");
+      dbCpuChartInstance = new Chart(ctxDbCpu, {
+        type: "line",
+        data: {
+          labels: Array(25).fill(""),
+          datasets: [
+            {
+              label: "PostgreSQL Host CPU (%)",
+              data: [16.2, 19.5, 17.8, 22.4, 20.1, 18.2, 24.1, 21.6, 17.9, 20.5, 23.2, 19.8, 17.4, 21.9, 24.5, 20.2, 18.1, 21.4, 23.8, 19.5, 17.8, 22.1, 20.4, 18.2, 19.1],
+              borderColor: "#f97316",
+              backgroundColor: "rgba(249, 115, 22, 0.12)",
+              fill: true,
+              borderWidth: 2,
+              tension: 0.35,
+              pointRadius: 0
+            },
+            {
+              label: "Active Backends (Count)",
+              data: [9, 11, 10, 12, 11, 10, 13, 11, 9, 11, 12, 10, 9, 12, 13, 10, 9, 11, 12, 10, 9, 12, 11, 10, 11],
+              borderColor: "#ef4444",
+              borderWidth: 1.5,
+              tension: 0.35,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              labels: { color: tickColor, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              min: 0,
+              suggestedMax: 45,
+              grid: { color: gridColor },
+              ticks: { color: tickColor, font: { size: 10 } }
+            }
+          }
+        }
+      });
+
+      // 4. PostgreSQL Host RAM & Buffers Chart (Dual-Axis: RAM & Cache Hit %)
+      const ctxDbMem = document.getElementById("dbMemChart").getContext("2d");
+      dbMemChartInstance = new Chart(ctxDbMem, {
+        type: "line",
+        data: {
+          labels: Array(25).fill(""),
+          datasets: [
+            {
+              label: "Host RAM Used (GB)",
+              yAxisID: "y",
+              data: [6.4, 6.7, 6.5, 6.9, 6.8, 6.6, 7.1, 6.9, 6.6, 6.8, 7.0, 6.7, 6.5, 6.9, 7.2, 6.8, 6.6, 6.9, 7.1, 6.8, 6.5, 6.8, 7.0, 6.7, 6.8],
+              borderColor: "#10b981",
+              backgroundColor: "rgba(16, 185, 129, 0.12)",
+              fill: true,
+              borderWidth: 2,
+              tension: 0.35,
+              pointRadius: 0
+            },
+            {
+              label: "Cache Hit Ratio (%)",
+              yAxisID: "y1",
+              data: [99.2, 99.5, 99.3, 99.6, 99.4, 99.1, 99.7, 99.5, 99.3, 99.6, 99.4, 99.2, 99.5, 99.7, 99.4, 99.2, 99.5, 99.6, 99.4, 99.3, 99.5, 99.6, 99.4, 99.2, 99.4],
+              borderColor: "#0284c7",
+              borderWidth: 1.5,
+              tension: 0.35,
+              pointRadius: 0
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              labels: { color: tickColor, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: { display: false },
+            y: {
+              type: "linear",
+              position: "left",
+              suggestedMin: 5.0,
+              suggestedMax: 10.0,
+              grid: { color: gridColor },
+              ticks: { color: tickColor, font: { size: 10 } }
+            },
+            y1: {
+              type: "linear",
+              position: "right",
+              suggestedMin: 96.0,
+              max: 100.0,
+              grid: { display: false },
+              ticks: { color: "#0284c7", font: { size: 9 } }
+            }
+          }
+        }
+      });
+    }
+
+    // Update Dashboard UI with metrics
+    function updateMetricsUI(data) {
+      lastReceivedMetrics = data;
+      currentMode = data.mode;
+      const subs = data.subsystems || {};
+
+      let activeVal = 0;
+      let maxVal = 100;
+      let utilPct = 0;
+
+      if (selectedView === "app_cpu") {
+        const appCpu = subs.app_cpu || {};
+        activeVal = appCpu.percent || 23.5;
+        maxVal = 100;
+        utilPct = Math.round(activeVal);
+
+        document.getElementById("card-1-title").innerText = "App Server CPU Load";
+        document.getElementById("badge-pool-status").innerText = "app-server-01 (8 vCPUs)";
+        document.getElementById("gauge-number").innerText = `${activeVal.toFixed(1)}%`;
+        document.getElementById("gauge-util-pct").innerText = `${utilPct}% CPU Utilization`;
+        document.getElementById("stat-idle-conn").innerText = `${(100 - activeVal).toFixed(0)}%`;
+        document.getElementById("stat-substat-1-label").innerText = "Idle CPU";
+        document.getElementById("stat-wait-threads").innerText = appCpu.blocked_threads || 0;
+        document.getElementById("stat-substat-2-label").innerText = "Blocked Threads";
+        document.getElementById("stat-timeouts").innerText = appCpu.load_avg || "1.20";
+        document.getElementById("stat-substat-3-label").innerText = "Load Avg (1m)";
+
+        document.getElementById("card-2-title").innerText = "App CPU Utilization (%)";
+        document.getElementById("stat-latency-p99").innerText = activeVal.toFixed(1);
+        document.getElementById("stat-card-2-unit").innerText = "% CPU";
+
+        document.getElementById("card-3-title").innerText = "Worker Threads Waiting";
+        document.getElementById("stat-throughput-tps").innerText = appCpu.blocked_threads || 0;
+        document.getElementById("stat-card-3-unit").innerText = "threads";
+      } else if (selectedView === "app_memory") {
+        const appMem = subs.app_memory || {};
+        activeVal = appMem.heap_used_mb || 1450;
+        maxVal = appMem.heap_max_mb || 4096;
+        utilPct = Math.round(appMem.heap_util_pct || 35.4);
+
+        document.getElementById("card-1-title").innerText = "App Server JVM Heap";
+        document.getElementById("badge-pool-status").innerText = "HotSpot 64-Bit VM";
+        document.getElementById("gauge-number").innerText = `${Math.round(activeVal)} MB`;
+        document.getElementById("gauge-util-pct").innerText = `${utilPct}% / 4,096 MB`;
+        document.getElementById("stat-idle-conn").innerText = `${Math.round(maxVal - activeVal)} MB`;
+        document.getElementById("stat-substat-1-label").innerText = "Free Heap";
+        document.getElementById("stat-wait-threads").innerText = `${appMem.gc_pause_ms || 12} ms`;
+        document.getElementById("stat-substat-2-label").innerText = "GC Pause Latency";
+        document.getElementById("stat-timeouts").innerText = `${appMem.metaspace_mb || 84} MB`;
+        document.getElementById("stat-substat-3-label").innerText = "Metaspace";
+
+        document.getElementById("card-2-title").innerText = "JVM Heap Allocated (MB)";
+        document.getElementById("stat-latency-p99").innerText = Math.round(activeVal);
+        document.getElementById("stat-card-2-unit").innerText = "MB Heap";
+
+        document.getElementById("card-3-title").innerText = "GC Pause Duration";
+        document.getElementById("stat-throughput-tps").innerText = appMem.gc_pause_ms || 12;
+        document.getElementById("stat-card-3-unit").innerText = "ms (Pause)";
+      } else if (selectedView === "db_cpu") {
+        const dbCpu = subs.db_cpu || {};
+        activeVal = dbCpu.percent || 18.2;
+        maxVal = 100;
+        utilPct = Math.round(activeVal);
+
+        document.getElementById("card-1-title").innerText = "DB Server Host CPU";
+        document.getElementById("badge-pool-status").innerText = "postgres-db-01 (16 vCPUs)";
+        document.getElementById("gauge-number").innerText = `${activeVal.toFixed(1)}%`;
+        document.getElementById("gauge-util-pct").innerText = `${utilPct}% Host CPU Load`;
+        document.getElementById("stat-idle-conn").innerText = `${(100 - activeVal).toFixed(0)}%`;
+        document.getElementById("stat-substat-1-label").innerText = "Idle Host CPU";
+        document.getElementById("stat-wait-threads").innerText = `${dbCpu.active_backends || 10} / 100`;
+        document.getElementById("stat-substat-2-label").innerText = "Active Backends";
+        document.getElementById("stat-timeouts").innerText = `${dbCpu.iowait_pct || 1.5}%`;
+        document.getElementById("stat-substat-3-label").innerText = "CPU IO-Wait";
+
+        document.getElementById("card-2-title").innerText = "PostgreSQL Host CPU (%)";
+        document.getElementById("stat-latency-p99").innerText = activeVal.toFixed(1);
+        document.getElementById("stat-card-2-unit").innerText = "% Host CPU";
+
+        document.getElementById("card-3-title").innerText = "Active Backend Capacity";
+        document.getElementById("stat-throughput-tps").innerText = `${dbCpu.active_backends || 10} / 100`;
+        document.getElementById("stat-card-3-unit").innerText = "backends";
+      } else if (selectedView === "db_memory") {
+        const dbMem = subs.db_memory || {};
+        activeVal = dbMem.ram_used_gb || 6.7;
+        maxVal = dbMem.ram_total_gb || 16.0;
+        utilPct = Math.round(dbMem.ram_util_pct || 41.8);
+
+        document.getElementById("card-1-title").innerText = "DB Server RAM Saturation";
+        document.getElementById("badge-pool-status").innerText = "16 GB ECC RAM";
+        document.getElementById("gauge-number").innerText = `${activeVal.toFixed(1)} GB`;
+        document.getElementById("gauge-util-pct").innerText = `${utilPct}% / 16.0 GB`;
+        document.getElementById("stat-idle-conn").innerText = `${(maxVal - activeVal).toFixed(1)} GB`;
+        document.getElementById("stat-substat-1-label").innerText = "Available RAM";
+        document.getElementById("stat-wait-threads").innerText = `${dbMem.cache_hit_pct || 99.4}%`;
+        document.getElementById("stat-substat-2-label").innerText = "Cache Hit Ratio";
+        document.getElementById("stat-timeouts").innerText = `${dbMem.shared_buffers_gb || 4.2} GB`;
+        document.getElementById("stat-substat-3-label").innerText = "Shared Buffers";
+
+        document.getElementById("card-2-title").innerText = "Database Host RAM (GB)";
+        document.getElementById("stat-latency-p99").innerText = activeVal.toFixed(1);
+        document.getElementById("stat-card-2-unit").innerText = "GB RAM";
+
+        document.getElementById("card-3-title").innerText = "Buffer Cache Hit Ratio";
+        document.getElementById("stat-throughput-tps").innerText = dbMem.cache_hit_pct || 99.4;
+        document.getElementById("stat-card-3-unit").innerText = "% Hit";
+      } else {
+        // "grafana" - Default Database Connection Pool & Latency/TPS
+        const active = data.active_connections;
+        const maxPool = data.max_connections;
+        const pct = data.pool_utilization_pct;
+        activeVal = active;
+        maxVal = maxPool;
+        utilPct = pct;
+
+        document.getElementById("card-1-title").innerText = "DB Connection Pool";
+        document.getElementById("badge-pool-status").innerText = "HikariPool-1";
+        document.getElementById("gauge-number").innerText = `${Math.round(active)} / ${maxPool}`;
+        document.getElementById("gauge-util-pct").innerText = `${pct}% Saturation`;
+        document.getElementById("stat-idle-conn").innerText = Math.max(0, maxPool - Math.round(active));
+        document.getElementById("stat-substat-1-label").innerText = "Idle Slots";
+        document.getElementById("stat-wait-threads").innerText = data.waiting_threads;
+        document.getElementById("stat-substat-2-label").innerText = "Waiting Threads";
+        document.getElementById("stat-timeouts").innerText = data.timeout_count;
+        document.getElementById("stat-substat-3-label").innerText = "Timeouts";
+
+        document.getElementById("card-2-title").innerText = "DB Query Latency";
+        document.getElementById("stat-latency-p99").innerText = data.latency_p99_ms;
+        document.getElementById("stat-card-2-unit").innerText = "ms (P99)";
+
+        document.getElementById("card-3-title").innerText = "DB Query Throughput (TPS)";
+        document.getElementById("stat-throughput-tps").innerText = data.throughput_tps;
+        document.getElementById("stat-card-3-unit").innerText = "TPS";
+      }
+
+      // Update Subsystem Stat Badges
+      const statAppCpu = document.getElementById("stat-app-cpu-val");
+      if (statAppCpu) statAppCpu.innerText = (subs.app_cpu?.percent != null ? subs.app_cpu.percent : 23.5).toFixed(1);
+
+      const statAppMem = document.getElementById("stat-app-mem-val");
+      if (statAppMem) statAppMem.innerText = Math.round(subs.app_memory?.heap_used_mb != null ? subs.app_memory.heap_used_mb : 1450).toLocaleString();
+
+      const statDbCpu = document.getElementById("stat-db-cpu-val");
+      if (statDbCpu) statDbCpu.innerText = (subs.db_cpu?.percent != null ? subs.db_cpu.percent : 18.2).toFixed(1);
+
+      const statDbMem = document.getElementById("stat-db-mem-val");
+      if (statDbMem) statDbMem.innerText = (subs.db_memory?.ram_used_gb != null ? subs.db_memory.ram_used_gb : 6.7).toFixed(1);
+
+      // Update Gauge SVG Arc
+      const circle = document.getElementById("gauge-circle");
+      const circumference = 440;
+      const offset = circumference - (circumference * (utilPct / 100));
+      circle.style.strokeDashoffset = offset;
+
+      if (utilPct > 80) {
+        circle.style.stroke = "var(--accent-red)";
+      } else if (utilPct > 50) {
+        circle.style.stroke = "var(--accent-amber)";
+      } else {
+        circle.style.stroke = "var(--accent-green)";
+      }
+
+      // Update System Status Pill
+      const pill = document.getElementById("system-status-pill");
+      const pillText = document.getElementById("system-status-text");
+
+      if (currentMode === "leak") {
+        pill.className = "system-pill leak";
+        pillText.innerText = `CRITICAL: LEAK DETECTED (${Math.round(data.active_connections)}/${data.max_connections})`;
+      } else if (currentMode === "investigating") {
+        pill.className = "system-pill investigating";
+        pillText.innerText = "INVESTIGATING VIA AI...";
+      } else {
+        pill.className = "system-pill";
+        pillText.innerText = `HEALTHY (${Math.round(data.active_connections)}/${data.max_connections})`;
+      }
+
+      // Update Charts from History
+      if (data.history && data.history.length > 0) {
+        const labels = data.history.map(h => h.time);
+        let s1 = [];
+        let s2 = [];
+        let s3 = [];
+
+        if (selectedView === "app_cpu") {
+          s1 = data.history.map(h => h.app_cpu_percent || 23.5);
+          s2 = data.history.map(h => (h.app_cpu_percent || 23.5) * 0.7);
+          s3 = data.history.map(h => h.app_blocked_threads || 0);
+          if (latencyChartInstance) {
+            latencyChartInstance.data.datasets[0].label = "App CPU Utilization (%)";
+            latencyChartInstance.data.datasets[1].label = "System Kernel CPU (%)";
+          }
+          if (tpsChartInstance) {
+            tpsChartInstance.data.datasets[0].label = "Blocked Threads";
+          }
+        } else if (selectedView === "app_memory") {
+          s1 = data.history.map(h => h.app_heap_used_mb || 1450);
+          s2 = data.history.map(h => 4096);
+          s3 = data.history.map(h => h.app_gc_pause_ms || 12);
+          if (latencyChartInstance) {
+            latencyChartInstance.data.datasets[0].label = "JVM Heap Used (MB)";
+            latencyChartInstance.data.datasets[1].label = "Max Allocated Heap (4096 MB)";
+          }
+          if (tpsChartInstance) {
+            tpsChartInstance.data.datasets[0].label = "GC Pause Latency (ms)";
+          }
+        } else if (selectedView === "db_cpu") {
+          s1 = data.history.map(h => h.db_cpu_percent || 18.2);
+          s2 = data.history.map(h => (h.db_cpu_percent || 18.2) * 0.3);
+          s3 = data.history.map(h => h.db_active_backends || 10);
+          if (latencyChartInstance) {
+            latencyChartInstance.data.datasets[0].label = "PostgreSQL Host CPU (%)";
+            latencyChartInstance.data.datasets[1].label = "PostgreSQL User CPU (%)";
+          }
+          if (tpsChartInstance) {
+            tpsChartInstance.data.datasets[0].label = "Active Backend Processes";
+          }
+        } else if (selectedView === "db_memory") {
+          s1 = data.history.map(h => h.db_ram_used_gb || 6.7);
+          s2 = data.history.map(h => 16.0);
+          s3 = data.history.map(h => h.db_cache_hit_pct || 99.4);
+          if (latencyChartInstance) {
+            latencyChartInstance.data.datasets[0].label = "Host RAM Used (GB)";
+            latencyChartInstance.data.datasets[1].label = "Total Server RAM (16.0 GB)";
+          }
+          if (tpsChartInstance) {
+            tpsChartInstance.data.datasets[0].label = "Buffer Cache Hit Ratio (%)";
+          }
+        } else {
+          s1 = data.history.map(h => h.latency_p99);
+          s2 = data.history.map(h => h.latency_p50);
+          s3 = data.history.map(h => h.throughput_tps);
+          if (latencyChartInstance) {
+            latencyChartInstance.data.datasets[0].label = "P99 Latency (ms)";
+            latencyChartInstance.data.datasets[1].label = "P50 Latency (ms)";
+          }
+          if (tpsChartInstance) {
+            tpsChartInstance.data.datasets[0].label = "Throughput (TPS)";
+          }
+        }
+
+        if (latencyChartInstance) {
+          latencyChartInstance.data.labels = labels;
+          latencyChartInstance.data.datasets[0].data = s1;
+          latencyChartInstance.data.datasets[1].data = s2;
+          latencyChartInstance.update();
+        }
+
+        if (tpsChartInstance) {
+          tpsChartInstance.data.labels = labels;
+          tpsChartInstance.data.datasets[0].data = s3;
+          tpsChartInstance.update();
+        }
+
+        // Update Subsystem Charts from History
+        if (appCpuChartInstance) {
+          appCpuChartInstance.data.labels = labels;
+          appCpuChartInstance.data.datasets[0].data = data.history.map(h => h.app_cpu_percent != null ? h.app_cpu_percent : 23.5);
+          appCpuChartInstance.data.datasets[1].data = data.history.map(h => h.app_blocked_threads != null ? h.app_blocked_threads : 0);
+          appCpuChartInstance.update();
+        }
+
+        if (appMemChartInstance) {
+          appMemChartInstance.data.labels = labels;
+          appMemChartInstance.data.datasets[0].data = data.history.map(h => h.app_heap_used_mb != null ? h.app_heap_used_mb : 1450);
+          appMemChartInstance.data.datasets[1].data = data.history.map(h => h.app_gc_pause_ms != null ? h.app_gc_pause_ms : 12);
+          appMemChartInstance.update();
+        }
+
+        if (dbCpuChartInstance) {
+          dbCpuChartInstance.data.labels = labels;
+          dbCpuChartInstance.data.datasets[0].data = data.history.map(h => h.db_cpu_percent != null ? h.db_cpu_percent : 18.2);
+          dbCpuChartInstance.data.datasets[1].data = data.history.map(h => h.db_active_backends != null ? h.db_active_backends : 10);
+          dbCpuChartInstance.update();
+        }
+
+        if (dbMemChartInstance) {
+          dbMemChartInstance.data.labels = labels;
+          dbMemChartInstance.data.datasets[0].data = data.history.map(h => h.db_ram_used_gb != null ? h.db_ram_used_gb : 6.7);
+          dbMemChartInstance.data.datasets[1].data = data.history.map(h => h.db_cache_hit_pct != null ? h.db_cache_hit_pct : 99.4);
+          dbMemChartInstance.update();
+        }
+      }
+
+      // Update Live Log Stream
+      if (data.recent_logs && data.recent_logs.length > 0) {
+        const stream = document.getElementById("log-stream");
+        stream.innerHTML = "";
+        data.recent_logs.forEach(logLine => {
+          const div = document.createElement("div");
+          div.className = "log-entry";
+          if (logLine.includes("ERROR")) {
+            div.className += " error";
+          } else if (logLine.includes("WARN")) {
+            div.className += " warn";
+          } else {
+            div.className += " info";
+          }
+          div.innerText = logLine;
+          stream.appendChild(div);
+        });
+        stream.scrollTop = stream.scrollHeight;
+      }
+
+      // Update Parallel AI Spike Monitor
+      const spikeMonitor = document.getElementById("ai-spike-monitor");
+      const spikeIcon = document.getElementById("ai-spike-icon");
+      const spikeText = document.getElementById("ai-spike-text");
+      const engineBadge = document.getElementById("ai-engine-status-badge");
+
+      if (spikeMonitor && spikeIcon && spikeText) {
+        if (data.mode === "leak" || data.pool_utilization_pct > 80 || data.latency_p99_ms > 200) {
+          spikeMonitor.className = "ai-spike-monitor spike";
+          spikeIcon.innerText = "🔴";
+          spikeText.innerText = `CRITICAL SPIKE DETECTED: Pool Saturation ${Math.round(data.pool_utilization_pct)}% | P99: ${data.latency_p99_ms.toFixed(1)}ms`;
+          if (engineBadge && !isInvestigating) {
+            engineBadge.innerText = "SPIKE DETECTED";
+            engineBadge.style.color = "var(--accent-red)";
+            engineBadge.style.background = "rgba(239, 68, 68, 0.15)";
+          }
+        } else {
+          spikeMonitor.className = "ai-spike-monitor";
+          spikeIcon.innerText = "🟢";
+          spikeText.innerText = `Telemetry within SLA (${Math.round(data.active_connections)}/10 conn, ${data.latency_p99_ms.toFixed(1)}ms). Ready.`;
+          if (engineBadge && !isInvestigating && engineBadge.innerText !== "✔ RCA REPORT READY") {
+            engineBadge.innerText = "READY";
+            engineBadge.style.color = "var(--accent-green)";
+            engineBadge.style.background = "rgba(16, 185, 129, 0.12)";
+          }
+        }
+      }
+    }
+
+    // Poll live metrics every 1s
+    async function fetchLiveMetrics() {
+      try {
+        const res = await fetch("/api/metrics");
+        if (res.ok) {
+          const data = await res.json();
+          updateMetricsUI(data);
+        }
+      } catch (err) {
+        console.error("Metric polling error:", err);
+      }
+    }
+
+    // Trigger Normal Operations
+    async function triggerNormal() {
+      try {
+        const res = await fetch("/api/control/normal", { method: "POST" });
+        const data = await res.json();
+        logToTerminal("USER", data.message);
+        resetStateNodes();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // Inject Connection Leak
+    async function triggerLeak() {
+      try {
+        const res = await fetch("/api/control/leak", { method: "POST" });
+        const data = await res.json();
+        logToTerminal("USER", data.message);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // Dynamically Populate the RCA Report with the exact live spike telemetry
+    function populateLiveRcaReport() {
+      const activeUrl = document.getElementById("grafana-url-input")?.value.trim() || "http://grafana.internal:3000/d/perf-prod/hikari-postgres-pool";
+      const metrics = lastReceivedMetrics || {};
+      const activeConn = Math.round(metrics.active_connections || 10);
+      const maxConn = metrics.max_connections || 10;
+      const poolPct = Math.round(metrics.pool_utilization_pct || 100);
+      const p99 = (metrics.latency_p99_ms || 3450.0).toFixed(1);
+      const tps = (metrics.throughput_tps || 1.8).toFixed(1);
+      const threads = metrics.waiting_threads || 84;
+      const timestamp = new Date().toUTCString();
+
+      // Ensure target URL is NEVER undefined
+      const targetEl = document.getElementById("report-target-grafana-url");
+      if (targetEl) targetEl.innerText = activeUrl;
+
+      const sumUrl = document.getElementById("report-summary-url");
+      if (sumUrl) sumUrl.innerText = activeUrl;
+
+      const timeEl = document.getElementById("report-timestamp");
+      if (timeEl) timeEl.innerText = timestamp;
+
+      // Executive summary metrics
+      const sumActive = document.getElementById("report-sum-active");
+      if (sumActive) sumActive.innerText = `${activeConn}/${maxConn} (${poolPct}%)`;
+
+      const sumP99 = document.getElementById("report-sum-p99");
+      if (sumP99) sumP99.innerText = `${p99} ms`;
+
+      const sumTps = document.getElementById("report-sum-tps");
+      if (sumTps) sumTps.innerText = `${tps} TPS`;
+
+      // Matrix Table
+      const mPool = document.getElementById("report-matrix-pool");
+      if (mPool) mPool.innerText = `${activeConn} / ${maxConn} (${poolPct}%)`;
+
+      const mPoolFact = document.getElementById("report-matrix-pool-factor");
+      if (mPoolFact) mPoolFact.innerText = poolPct > 80 ? "+400% (Complete Saturation)" : "Normal";
+
+      const mLatency = document.getElementById("report-matrix-latency");
+      if (mLatency) mLatency.innerText = `${p99} ms`;
+
+      const mLatencyFact = document.getElementById("report-matrix-latency-factor");
+      if (mLatencyFact) {
+        const factor = Math.round(((parseFloat(p99) - 16.5) / 16.5) * 100);
+        mLatencyFact.innerText = factor > 0 ? `+${factor.toLocaleString()}% (Critical SLA Breach)` : "Within SLA";
+      }
+
+      const mTps = document.getElementById("report-matrix-tps");
+      if (mTps) mTps.innerText = `${tps} TPS`;
+
+      const mTpsFact = document.getElementById("report-matrix-tps-factor");
+      if (mTpsFact) {
+        const collapse = Math.round(((45.2 - parseFloat(tps)) / 45.2) * 100);
+        mTpsFact.innerText = collapse > 0 ? `-${collapse}% (Throughput Collapse)` : "Normal";
+      }
+
+      const mThreads = document.getElementById("report-matrix-threads");
+      if (mThreads) mThreads.innerText = `${threads} threads`;
+    }
+
+    // Trigger Autonomous PerfRCA Investigation via SSE
+    function triggerAgentInvestigation() {
+      if (isInvestigating) return;
+      isInvestigating = true;
+
+      const btnMain = document.getElementById("btn-agent");
+      const btnParallel = document.getElementById("btn-run-rca-parallel");
+      if (btnMain) btnMain.disabled = true;
+      if (btnParallel) btnParallel.disabled = true;
+
+      document.getElementById("agent-active-badge").innerText = "Status: INVESTIGATING...";
+      document.getElementById("agent-active-badge").style.color = "var(--accent-purple)";
+
+      const engineBadge = document.getElementById("ai-engine-status-badge");
+      if (engineBadge) {
+        engineBadge.innerText = "ANALYZING SPIKE...";
+        engineBadge.style.color = "var(--accent-purple)";
+        engineBadge.style.background = "rgba(168, 85, 247, 0.15)";
+      }
+
+      // Show Animated AI Working Indicator
+      const workingBox = document.getElementById("ai-working-indicator");
+      const workingText = document.getElementById("ai-working-step-text");
+      const workingPct = document.getElementById("ai-working-pct-text");
+      const workingBar = document.getElementById("ai-progress-bar");
+      if (workingBox) workingBox.style.display = "block";
+      if (workingText) workingText.innerText = "⚡ Initializing AI Root Cause Analysis (15s Deep Scan)...";
+      if (workingPct) workingPct.innerText = "0%";
+      if (workingBar) workingBar.style.width = "0%";
+
+      // Smooth 15-second AI progress ticker
+      let progressVal = 0;
+      const progressTimer = setInterval(() => {
+        if (!isInvestigating) {
+          clearInterval(progressTimer);
+          return;
+        }
+        if (progressVal < 96) {
+          progressVal += 1.3;
+          if (progressVal > 96) progressVal = 96;
+          const rounded = Math.floor(progressVal);
+          if (workingPct) workingPct.innerText = `${rounded}%`;
+          if (workingBar) workingBar.style.width = `${rounded}%`;
+
+          if (workingText) {
+            if (progressVal < 25) {
+              workingText.innerText = "🔍 Stage 1/2: Scraping live PromQL spike telemetry from Grafana...";
+            } else if (progressVal < 50) {
+              workingText.innerText = "📊 Stage 1/2: Correlating P99 latency spike (>3000ms) & pool exhaustion (10/10)...";
+            } else if (progressVal < 75) {
+              workingText.innerText = "⚡ Stage 2/2: Mining 45,000 logs with Drain-Tree template clustering...";
+            } else {
+              workingText.innerText = "🧠 Stage 2/2: Isolating Hikari failure signatures & synthesizing incident RCA...";
+            }
+          }
+        }
+      }, 200);
+
+      resetStateNodes();
+      logToTerminal("AGENT", "Starting Autonomous Performance Root Cause Analysis (15s Deep Multi-Stage Scan)...");
+
+      const evtSource = new EventSource("/api/agent/stream");
+
+      evtSource.onmessage = function(event) {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === "step_start") {
+          activateStepNode(msg.step, msg.name);
+          logToTerminal(`STEP ${msg.step}`, msg.description);
+        } else if (msg.type === "step_complete") {
+          completeStepNode(msg.step, msg.trace);
+          logToTerminal(`TRACE`, msg.trace.details);
+        } else if (msg.type === "investigation_finished") {
+          clearInterval(progressTimer);
+          evtSource.close();
+          isInvestigating = false;
+          if (btnMain) btnMain.disabled = false;
+          if (btnParallel) btnParallel.disabled = false;
+
+          document.getElementById("agent-active-badge").innerText = "Status: COMPLETED (RCA READY)";
+          document.getElementById("agent-active-badge").style.color = "var(--accent-green)";
+
+          if (engineBadge) {
+            engineBadge.innerText = "✔ RCA REPORT READY";
+            engineBadge.style.color = "var(--accent-green)";
+            engineBadge.style.background = "rgba(16, 185, 129, 0.15)";
+          }
+
+          if (workingBox) {
+            if (workingText) workingText.innerText = "✔ RCA Completed (15s)! Incident report synthesized and ready.";
+            if (workingPct) workingPct.innerText = "100%";
+            if (workingBar) workingBar.style.width = "100%";
+            setTimeout(() => { if (workingBox) workingBox.style.display = "none"; }, 4000);
+          }
+
+          logToTerminal("SUCCESS", "Investigation finished (15s)! Both RCA stages complete (Metrics Anomaly + Drain Log Mining).");
+          logToTerminal("REPORT READY", "📄 Full Incident RCA Report generated from spike telemetry! Scroll down to inspect or click 'Download Document (.doc)'.");
+
+          // Dynamically Populate the RCA Report with the exact spike telemetry
+          populateLiveRcaReport();
+
+          // Auto-reveal and scroll to the Full Incident RCA Report
+          const reportSec = document.getElementById("section-full-report");
+          if (reportSec) {
+            reportSec.style.display = "block";
+            reportSec.classList.add("highlight");
+            reportSec.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+      };
+
+      evtSource.onerror = function() {
+        clearInterval(progressTimer);
+        evtSource.close();
+        isInvestigating = false;
+        if (btnMain) btnMain.disabled = false;
+        if (btnParallel) btnParallel.disabled = false;
+        if (workingBox) workingBox.style.display = "none";
+      };
+    }
+
+    function activateStepNode(step, name) {
+      const node = document.getElementById(`step-node-${step}`);
+      if (node) {
+        node.className = "step-node active";
+        document.getElementById(`step-meta-${step}`).innerText = "Executing...";
+      }
+    }
+
+    function completeStepNode(step, trace) {
+      const node = document.getElementById(`step-node-${step}`);
+      if (node) {
+        node.className = "step-node completed";
+        document.getElementById(`step-badge-${step}`).innerHTML = "✔";
+        document.getElementById(`step-meta-${step}`).innerText = "✔ Complete";
+      }
+    }
+
+    function resetStateNodes() {
+      for (let i = 1; i <= 2; i++) {
+        const node = document.getElementById(`step-node-${i}`);
+        if (node) {
+          node.className = "step-node";
+          document.getElementById(`step-badge-${i}`).innerText = i;
+          document.getElementById(`step-meta-${i}`).innerText = "Waiting...";
+        }
+      }
+      document.getElementById("agent-active-badge").innerText = "Status: STANDBY";
+      document.getElementById("agent-active-badge").style.color = "var(--text-muted)";
+    }
+
+    function logToTerminal(tag, message) {
+      const term = document.getElementById("agent-terminal");
+      const div = document.createElement("div");
+      div.className = "terminal-line";
+      const now = new Date().toTimeString().split(" ")[0];
+      div.innerHTML = `
+        <span class="term-time">[${now}]</span>
+        <span class="term-step">[${tag}]</span>
+        <span class="term-msg">${message}</span>
+      `;
+      term.appendChild(div);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    // Reliable Word .doc Download via client-side Blob Object URL (fixes "File wasn't available on this site")
+    async function downloadIncidentReport() {
+      logToTerminal("EXPORT", "Initiating download: PerfRCA_Incident_Report_PERF-512.doc...");
+      try {
+        const res = await fetch("/api/report/download");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const blob = await res.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = "PerfRCA_Incident_Report_PERF-512.doc";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 2000);
+        logToTerminal("SUCCESS", "Document downloaded successfully: PerfRCA_Incident_Report_PERF-512.doc");
+      } catch (err) {
+        console.error("Blob download failed, falling back to direct location change:", err);
+        window.location.href = "/api/report/download";
+      }
+    }
+
+    function handleGitUrlAction() {
+      const gitUrl = "https://github.com/enterprise/order-service.git";
+      logToTerminal("GIT", `Configured target Git Repository: ${gitUrl} (Branch: main, Culprit commit: b8f3a9e)`);
+      const badge = document.getElementById("upload-status-badge");
+      if (badge) {
+        badge.style.display = "flex";
+        badge.innerHTML = `<span>🐙 Git Repository Linked: <strong>${gitUrl}</strong> (Tracking culprit commit b8f3a9e)</span>`;
+      }
+    }
+
+    function handleLogFileUpload(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      const badge = document.getElementById("upload-status-badge");
+      if (badge) {
+        badge.style.display = "flex";
+        badge.innerHTML = `<span>📁 Uploaded Log File: <strong>${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB) — Ingested into Drain-Tree parser</span>`;
+      }
+      logToTerminal("UPLOAD", `Log file uploaded: ${file.name} (${file.size} bytes). Drain clustering template matched.`);
+    }
+
+    // Theme Management: Light Theme by default
+    function updateChartsTheme() {
+      const isDark = document.body.classList.contains("dark-theme");
+      const gridColor = isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.06)";
+      const tickColor = isDark ? "#94a3b8" : "#64748b";
+      const allCharts = [
+        latencyChartInstance,
+        tpsChartInstance,
+        appCpuChartInstance,
+        appMemChartInstance,
+        dbCpuChartInstance,
+        dbMemChartInstance
+      ];
+      allCharts.forEach(chart => {
+        if (chart && chart.options && chart.options.scales) {
+          if (chart.options.scales.y) {
+            chart.options.scales.y.grid.color = gridColor;
+            chart.options.scales.y.ticks.color = tickColor;
+          }
+          if (chart.options.scales.y1 && chart.options.scales.y1.ticks) {
+            if (!chart.options.scales.y1.ticks.color) {
+              chart.options.scales.y1.ticks.color = tickColor;
+            }
+          }
+          if (chart.options.plugins && chart.options.plugins.legend) {
+            chart.options.plugins.legend.labels.color = tickColor;
+          }
+          chart.update();
+        }
+      });
+    }
+
+    function updateThemeUI() {
+      const isDark = document.body.classList.contains("dark-theme");
+      const icon = document.getElementById("theme-icon");
+      const text = document.getElementById("theme-text");
+      if (icon && text) {
+        if (isDark) {
+          icon.innerText = "☀️";
+          text.innerText = "Light Mode";
+        } else {
+          icon.innerText = "🌙";
+          text.innerText = "Dark Mode";
+        }
+      }
+      updateChartsTheme();
+    }
+
+    function toggleTheme() {
+      const isDark = document.body.classList.toggle("dark-theme");
+      localStorage.setItem("perfrca_theme", isDark ? "dark" : "light");
+      updateThemeUI();
+    }
+
+    function initTheme() {
+      // By default light theme as requested by user
+      const saved = localStorage.getItem("perfrca_theme");
+      if (saved === "dark") {
+        document.body.classList.add("dark-theme");
+      } else {
+        document.body.classList.remove("dark-theme");
+      }
+      updateThemeUI();
+    }
+
+    async function inspectGrafanaTarget() {
+      const urlInput = document.getElementById("grafana-url-input");
+      const url = urlInput ? urlInput.value.trim() : "";
+      const pill = document.getElementById("grafana-status-pill");
+      const pillText = document.getElementById("grafana-status-text");
+      const expandWrapper = document.getElementById("dashboard-expand-wrapper");
+      const inspectBtn = document.getElementById("btn-inspect-grafana");
+
+      if (pill) pill.className = "system-pill investigating";
+      if (pillText) pillText.innerText = "INSPECTING TELEMETRY...";
+      if (inspectBtn) inspectBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/grafana/inspect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            url: url || "http://grafana.internal:3000/d/perf-prod/hikari-postgres-pool",
+            view: selectedView || "grafana"
+          })
+        });
+        const data = await res.json();
+
+        // Expand dashboard smoothly below
+        if (expandWrapper) {
+          expandWrapper.classList.remove("collapsed");
+        }
+
+        if (document.getElementById("report-target-grafana-url")) {
+          document.getElementById("report-target-grafana-url").innerText = data.url;
+        }
+
+        if (pill) {
+          pill.className = "system-pill";
+          pillText.innerText = `CONNECTED & SYNCED (5s)`;
+        }
+
+        logToTerminal("GRAFANA", `Target inspected: ${data.url}. Live telemetry perspective: [${data.dashboard_title}].`);
+        if (data.alert && data.alert.status === "ALERTING") {
+          logToTerminal("ANOMALY", `Active alert detected on target: [${data.alert.name}]. Ready to run PerfRCA Agent.`);
+        }
+      } catch (err) {
+        console.error("Grafana inspection error:", err);
+        if (pill) {
+          pill.className = "system-pill leak";
+          pillText.innerText = "INSPECTION FAILED";
+        }
+      } finally {
+        if (inspectBtn) inspectBtn.disabled = false;
+      }
+    }
+
+    function onMetricViewChange() {
+      const select = document.getElementById("metric-view-select");
+      selectedView = select ? select.value : "grafana";
+      const viewNames = {
+        grafana: "Grafana Overview (Database Pool, Latency & TPS)",
+        app_cpu: "Application Server CPU Stat",
+        app_memory: "Application Server Memory Stat",
+        db_cpu: "DB Server CPU Stat",
+        db_memory: "DB Server Memory Stat"
+      };
+      logToTerminal("SUBSYSTEM", `Selected telemetry perspective: ${viewNames[selectedView] || selectedView}. Synchronizing live charts.`);
+      inspectGrafanaTarget();
+      if (lastReceivedMetrics) {
+        updateMetricsUI(lastReceivedMetrics);
+      }
+    }
+
+    function selectPreset(url, element) {
+      document.querySelectorAll(".preset-chip").forEach(el => el.classList.remove("active"));
+      if (element) element.classList.add("active");
+      const input = document.getElementById("grafana-url-input");
+      if (input) {
+        input.value = url;
+        inspectGrafanaTarget();
+      }
+    }
+
+    // Start everything on DOM load
+    window.addEventListener("DOMContentLoaded", () => {
+      initTheme();
+      initCharts();
+      fetchLiveMetrics();
+      setInterval(fetchLiveMetrics, 1000);
+      inspectGrafanaTarget(); // Initial sync on load
+    });
+  </script>
+</body>
+</html>
