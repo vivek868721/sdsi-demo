@@ -1,0 +1,39 @@
+{
+  "products": [
+    {
+      "sku": "PS5-CONSOLE",
+      "name": "PlayStation 5 Console",
+      "total_stock": 100,
+      "max_per_user": 2,
+      "price": 499.99
+    },
+    {
+      "sku": "IPHONE-15",
+      "name": "iPhone 15 Pro",
+      "total_stock": 50,
+      "max_per_user": 1,
+      "price": 999.99
+    },
+    {
+      "sku": "AIRPODS-PRO",
+      "name": "AirPods Pro 2nd Gen",
+      "total_stock": 200,
+      "max_per_user": 3,
+      "price": 249.99
+    },
+    {
+      "sku": "MACBOOK-M3",
+      "name": "MacBook Pro M3",
+      "total_stock": 30,
+      "max_per_user": 1,
+      "price": 1999.99
+    },
+    {
+      "sku": "SAMSUNG-TV",
+      "name": "Samsung 65\" OLED TV",
+      "total_stock": 25,
+      "max_per_user": 1,
+      "price": 1799.99
+    }
+  ]
+}
